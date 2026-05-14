@@ -200,7 +200,9 @@ func NewZarfCommand() *cobra.Command {
 	rootCmd.AddCommand(sayCommand())
 	rootCmd.AddCommand(newDestroyCommand())
 	rootCmd.AddCommand(newDevCommand())
+	rootCmd.AddCommand(newExtractCommand())
 	rootCmd.AddCommand(newInitCommand())
+	rootCmd.AddCommand(newInstallCommand())
 	rootCmd.AddCommand(newInternalCommand(rootCmd))
 	rootCmd.AddCommand(newPackageCommand())
 

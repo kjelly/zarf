@@ -183,6 +183,19 @@ $ zarf init --artifact-push-password={PASSWORD} --artifact-push-username={USERNA
 	CmdInitFlagArtifactPushUser  = "[alpha] Username to access to the artifact registry Zarf is configured to use. User must be able to upload package artifacts."
 	CmdInitFlagArtifactPushToken = "[alpha] API Token for the push-user to access the artifact registry"
 
+	// zarf extract
+	CmdExtractShort = "Extracts Helm charts and values from one or more Zarf packages for manual installation"
+	CmdExtractLong  = "Extracts Helm chart archives and merged values files from one or more Zarf packages. " +
+		"Charts and their corresponding values are written to the specified output directory. " +
+		"A install script with the corresponding 'helm install' commands is also generated. " +
+		"Use this command to inspect or manually deploy charts outside of the Zarf deploy pipeline."
+
+	// zarf install
+	CmdInstallShort = "Deploys one or more Zarf packages sequentially"
+	CmdInstallLong  = "Deploys one or more Zarf packages sequentially (each equivalent to 'zarf package deploy --confirm'). " +
+		"Each package is deployed in order, with all prompts skipped. " +
+		"Supports the same flags as 'zarf package deploy'."
+
 	// zarf internal
 	CmdInternalShort = "Internal tools used by zarf"
 

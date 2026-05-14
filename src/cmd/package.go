@@ -39,6 +39,7 @@ import (
 	"github.com/zarf-dev/zarf/src/pkg/packager/layout"
 	"github.com/zarf-dev/zarf/src/pkg/state"
 	"github.com/zarf-dev/zarf/src/pkg/utils"
+	"github.com/zarf-dev/zarf/src/pkg/value"
 	"github.com/zarf-dev/zarf/src/pkg/zoci"
 )
 
@@ -324,28 +325,42 @@ func (o *packageDeployOptions) run(cmd *cobra.Command, args []string) (err error
 		return err
 	}
 
+	ctx, values, cachePath, err := o.mergeAndPrepare(ctx)
+	if err != nil {
+		return err
+	}
+
+	return o.deployPackage(ctx, packageSource, values, cachePath)
+}
+
+// mergeAndPrepare handles viper merging, values parsing, and cache path resolution.
+// This is shared between 'package deploy' and 'install'.
+func (o *packageDeployOptions) mergeAndPrepare(ctx context.Context) (context.Context, value.Values, string, error) {
 	v := getViper()
 
-	// Merge variables
 	o.setVariables = helpers.TransformAndMergeMap(
 		v.GetStringMapString(VPkgDeploySet),
 		o.setVariables,
 		strings.ToUpper,
 	)
-	// Merge values; CLI --set-values overrides viper config, matching --set-variables.
 	o.setValues = mergeMap(v.GetStringMapString(VPkgDeploySetValues), o.setValues)
 
 	values, err := parseValues(ctx, o.valuesFiles, o.setValues)
 	if err != nil {
-		return err
+		return ctx, nil, "", err
 	}
 
 	cachePath, err := getCachePath(ctx)
 	if err != nil {
-		return err
+		return ctx, nil, "", err
 	}
 
-	// If deploy is confirmed, then only pull the necessary layers as we won't need to prompt for optional components
+	return ctx, values, cachePath, nil
+}
+
+// deployPackage performs the actual deployment for a single package source.
+// This is shared between 'package deploy' and 'install'.
+func (o *packageDeployOptions) deployPackage(ctx context.Context, packageSource string, values value.Values, cachePath string) (err error) {
 	filter := filters.Empty()
 	if o.confirm {
 		filter = filters.Combine(
