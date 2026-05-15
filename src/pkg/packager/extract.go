@@ -12,9 +12,14 @@ import (
 	"strings"
 
 	"github.com/defenseunicorns/pkg/helpers/v2"
+	"github.com/google/go-containerregistry/pkg/name"
+	"github.com/google/go-containerregistry/pkg/v1/tarball"
+	clayout "github.com/google/go-containerregistry/pkg/v1/layout"
+	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
 	"github.com/zarf-dev/zarf/src/config"
 	"github.com/zarf-dev/zarf/src/internal/packager/helm"
 	"github.com/zarf-dev/zarf/src/internal/packager/template"
+	"github.com/zarf-dev/zarf/src/pkg/logger"
 	"github.com/zarf-dev/zarf/src/pkg/packager/layout"
 	"github.com/zarf-dev/zarf/src/pkg/state"
 	"github.com/zarf-dev/zarf/src/pkg/utils"
@@ -190,9 +195,12 @@ func ExtractPackage(ctx context.Context, pkgLayout *layout.PackageLayout, opts E
 	}
 
 	if hasImages && !opts.SkipImages {
-		imagesDir := pkgLayout.GetImageDirPath()
 		imagesOutDir := filepath.Join(pkgOutputDir, "images")
-		if err := copyDirectory(imagesDir, imagesOutDir); err != nil {
+		if err := os.MkdirAll(imagesOutDir, helpers.ReadWriteExecuteUser); err != nil {
+			return nil, fmt.Errorf("unable to create images directory: %w", err)
+		}
+
+		if err := extractImagesAsDockerTarballs(ctx, pkgLayout.GetImageDirPath(), imagesOutDir); err != nil {
 			return nil, fmt.Errorf("failed to extract images: %w", err)
 		}
 	}
@@ -209,6 +217,58 @@ func ExtractPackage(ctx context.Context, pkgLayout *layout.PackageLayout, opts E
 	}, nil
 }
 
+func extractImagesAsDockerTarballs(ctx context.Context, ociLayoutDir, outputDir string) error {
+	l := logger.From(ctx)
+	layoutPath := clayout.Path(ociLayoutDir)
+	imgIdx, err := layoutPath.ImageIndex()
+	if err != nil {
+		return fmt.Errorf("failed to open image index: %w", err)
+	}
+	idxManifest, err := imgIdx.IndexManifest()
+	if err != nil {
+		return fmt.Errorf("failed to read image manifest: %w", err)
+	}
+
+	for _, manifest := range idxManifest.Manifests {
+		ref := manifest.Annotations[ocispec.AnnotationRefName]
+		if ref == "" {
+			ref = manifest.Annotations[ocispec.AnnotationBaseImageName]
+		}
+		if ref == "" {
+			l.Warn("skipping image with no reference annotation", "digest", manifest.Digest)
+			continue
+		}
+
+		ref = strings.ReplaceAll(ref, "sha256:", "sha256-")
+
+		tag, err := name.NewTag(ref, name.WeakValidation)
+		if err != nil {
+			l.Warn("skipping image with invalid reference", "ref", ref, "error", err)
+			continue
+		}
+
+		img, err := layoutPath.Image(manifest.Digest)
+		if err != nil {
+			return fmt.Errorf("failed to load image %s: %w", ref, err)
+		}
+
+		fileName := sanitizeFileName(ref) + ".tar"
+		outputPath := filepath.Join(outputDir, fileName)
+
+		l.Info("writing image as Docker tarball", "ref", ref, "path", outputPath)
+		if err := tarball.WriteToFile(outputPath, tag, img); err != nil {
+			return fmt.Errorf("failed to write image tarball %s: %w", ref, err)
+		}
+	}
+
+	return nil
+}
+
+func sanitizeFileName(ref string) string {
+	replacer := strings.NewReplacer("/", "_", ":", "_")
+	return replacer.Replace(ref)
+}
+
 func writeInstallScript(outputDir string, commands []HelmInstallCommand, hasImages bool) error {
 	var sb strings.Builder
 	sb.WriteString("#!/usr/bin/env bash\n")
@@ -217,10 +277,11 @@ func writeInstallScript(outputDir string, commands []HelmInstallCommand, hasImag
 	sb.WriteString("SCRIPT_DIR=\"$(cd \"$(dirname \"${BASH_SOURCE[0]}\")\" && pwd)\"\n\n")
 
 	if hasImages {
-		sb.WriteString("# Container images are available in OCI layout format in the images/ directory.\n")
-		sb.WriteString("# To push images to a registry using crane:\n")
-		sb.WriteString("#   zarf tools registry push ./images <registry-url>/<image-name>:<tag>\n")
-		sb.WriteString("#   skopeo copy oci:./images docker://<registry-url>/<image-name>:<tag>\n")
+		sb.WriteString("# Container images are available as Docker tarballs in the images/ directory.\n")
+		sb.WriteString("# To load and push an image:\n")
+		sb.WriteString("#   docker load -i images/<image-file>.tar\n")
+		sb.WriteString("#   docker tag <image-name>:<tag> <registry-url>/<image-name>:<tag>\n")
+		sb.WriteString("#   docker push <registry-url>/<image-name>:<tag>\n")
 		sb.WriteString("#\n")
 	}
 
